@@ -9,7 +9,8 @@ Survive escalating waves of enemies in a neon-lit arena, using a pulse rifle, a 
 ## Quick start
 
 ```bash
-cd /home/matt_heerspink/dev/lm_studio
+git clone https://github.com/matt_heerspink/void_runner.git
+cd void_runner
 ./serve.sh
 ```
 
@@ -198,3 +199,19 @@ a hard reload, or clearing site data in DevTools → Application → Storage.
 **Pointer lock doesn't engage** — some browsers restrict it to secure contexts and top-level documents. The game stays playable without it (it just won't capture the mouse); click the canvas to retry. Serving over `localhost` or HTTPS fixes it.
 
 **No sound** — browsers require a user gesture before audio can start. Click **ENTER THE VOID** first. Press `M` to toggle mute.
+
+---
+
+## Deployment
+
+The site is fully static (no build step), so it deploys to **GitHub Pages** as-is. The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) publishes the repo root on every push to `main`:
+
+1. Push the repo to GitHub.
+2. In the repository settings, set **Pages → Build and deployment → Source: GitHub Actions**.
+3. The game will be live at `https://<user>.github.io/void_runner/` after the first workflow run.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 matt_heerspink. Three.js (in `vendor/`) is also MIT-licensed, © Three.js authors.
