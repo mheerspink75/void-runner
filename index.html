@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VOID RUNNER — 3D FPS</title>
+<link rel="stylesheet" href="css/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎯</text></svg>" />
+</head>
+<body>
+
+<div id="app">
+  <canvas id="scene"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"><span></span><span></span><span></span><span></span><i></i></div>
+
+    <div id="hitmarker"></div>
+    <div id="damage-vignette"></div>
+    <div id="lowhealth-vignette"></div>
+
+    <div id="hud-topleft">
+      <div class="stat-line">
+        <span class="stat-label">SCORE</span>
+        <span class="stat-value" id="stat-score">0</span>
+      </div>
+      <div class="stat-line">
+        <span class="stat-label">WAVE</span>
+        <span class="stat-value" id="stat-wave">1</span>
+      </div>
+      <div class="stat-line">
+        <span class="stat-label">HOSTILES</span>
+        <span class="stat-value" id="stat-enemies">0</span>
+      </div>
+    </div>
+
+    <div id="wave-banner" class="hidden"><h2></h2><p></p></div>
+
+    <div id="hud-bottomleft">
+      <div id="health-block">
+        <div class="bar-shell">
+          <div class="bar-fill health" id="bar-health"></div>
+          <span class="bar-text" id="text-health">100</span>
+        </div>
+        <div class="bar-label">INTEGRITY</div>
+      </div>
+      <div id="stamina-shell" class="hidden">
+        <div class="bar-shell thin">
+          <div class="bar-fill stamina" id="bar-stamina"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hud-bottomright">
+      <div id="ammo-block">
+        <div class="ammo-count"><span id="text-ammo">30</span><em id="text-ammo-reserve">/ 120</em></div>
+        <div class="bar-shell thin">
+          <div class="bar-fill ammo" id="bar-ammo"></div>
+        </div>
+        <div id="charge-bar" class="hidden">
+          <div class="bar-shell thin">
+            <div class="bar-fill charge" id="bar-charge"></div>
+          </div>
+          <div class="bar-label charge-label">CHARGING</div>
+        </div>
+        <div class="bar-label" id="text-weapon">PULSE RIFLE</div>
+        <!-- Equipped-slot readout. Populated by hud.setSlot(). -->
+        <div id="weapon-slots">
+          <div class="slot"><span class="slot-key">1</span><span class="slot-name">RIFLE</span></div>
+          <div class="slot"><span class="slot-key">2</span><span class="slot-name">SCATTER</span></div>
+          <div class="slot"><span class="slot-key">3</span><span class="slot-name">ARC</span></div>
+          <div class="slot"><span class="slot-key">4</span><span class="slot-name">LOBBER</span></div>
+        </div>
+      </div>
+      <div id="reload-hint" class="hidden">RELOADING…</div>
+    </div>
+
+    <!-- Ability cooldowns -->
+    <div id="abilities">
+      <div class="ability" id="ab-dash">
+        <div class="ab-key">Q</div>
+        <div class="ab-ring"><div class="ab-fill" id="ab-dash-fill"></div></div>
+        <div class="ab-name">DASH</div>
+      </div>
+      <div class="ability" id="ab-melee">
+        <div class="ab-key">F</div>
+        <div class="ab-ring"><div class="ab-fill" id="ab-melee-fill"></div></div>
+        <div class="ab-name">MELEE</div>
+      </div>
+    </div>
+
+    <div id="overdrive" class="hidden">
+      <span class="od-label">OVERDRIVE</span>
+      <div class="od-bar"><div class="od-fill" id="od-fill"></div></div>
+    </div>
+
+    <div id="minimap-wrap">
+      <canvas id="minimap" width="150" height="150"></canvas>
+    </div>
+
+    <div id="buffs">
+      <div id="buff-overdrive" class="buff hidden">
+        <span class="buff-name">OVERDRIVE</span>
+        <span class="buff-timer" id="overdrive-timer">0.0</span>
+      </div>
+      <div id="buff-dash" class="buff hidden">
+        <span class="buff-name">DASH</span>
+        <span class="buff-timer" id="dash-timer">0.0</span>
+      </div>
+    </div>
+
+    <div id="killfeed"></div>
+    <div id="popups"></div>
+  </div>
+
+  <!-- ============ DAMAGE FLASH ============ -->
+  <div id="flash"></div>
+
+  <!-- ============ START MENU ============ -->
+  <div id="menu">
+    <div class="menu-bg"></div>
+    <div class="menu-content">
+      <h1 class="title">VOID<span>RUNNER</span></h1>
+      <p class="tagline">A 3D first-person shooter. Survive the waves.</p>
+
+      <div class="controls-grid">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></div>
+        <div><kbd>MOUSE</kbd><span>Look</span></div>
+        <div><kbd>LEFT&nbsp;CLICK</kbd><span>Fire / Charge</span></div>
+        <div><kbd>R</kbd><span>Reload</span></div>
+        <div><kbd>SPACE</kbd><span>Jump</span></div>
+        <div><kbd>SHIFT</kbd><span>Sprint</span></div>
+        <div><kbd>Q</kbd><span>Dash (i-frames)</span></div>
+        <div><kbd>F</kbd><span>Melee</span></div>
+        <div><kbd>CTRL</kbd><span>Crouch</span></div>
+        <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Weapon</span></div>
+        <div><kbd>M</kbd><span>Mute audio</span></div>
+        <div><kbd>ESC</kbd><span>Pause</span></div>
+      </div>
+
+      <button id="btn-start" class="cta">ENTER THE VOID</button>
+      <div class="btn-row">
+        <button id="btn-sound" class="ghost small">SOUND: ON</button>
+        <button id="btn-quality" class="ghost small">QUALITY: AUTO</button>
+      </div>
+      <p class="hint">Pointer lock will be requested. Press <kbd>ESC</kbd> to release it.</p>
+      <!-- Build stamp: if this number does not change after a reload, the
+           browser is serving a cached copy of the ES modules. -->
+      <p class="hint" id="build-stamp" style="opacity:.45;margin-top:.4rem"></p>
+    </div>
+  </div>
+
+  <!-- ============ PAUSE ============ -->
+  <div id="pause" class="hidden">
+    <div class="menu-content">
+      <h2 class="title small">PAUSED</h2>
+      <button id="btn-resume" class="cta">RESUME</button>
+      <button id="btn-quit" class="ghost">ABANDON RUN</button>
+    </div>
+  </div>
+
+  <!-- ============ GAME OVER ============ -->
+  <div id="gameover" class="hidden">
+    <div class="menu-content">
+      <h2 class="title small danger">YOU DIED</h2>
+      <div class="results">
+        <div><span>FINAL SCORE</span><b id="res-score">0</b></div>
+        <div><span>WAVE REACHED</span><b id="res-wave">1</b></div>
+        <div><span>KILLS</span><b id="res-kills">0</b></div>
+      </div>
+      <div class="results sub">
+        <div><span>BEST STREAK</span><b id="res-combo">0</b></div>
+        <div><span>HEADSHOTS</span><b id="res-headshots">0</b></div>
+        <div><span>DASHES</span><b id="res-dashes">0</b></div>
+        <div><span>TIME</span><b id="res-time">0:00</b></div>
+      </div>
+      <button id="btn-retry" class="cta">TRY AGAIN</button>
+      <button id="btn-menu" class="ghost">MAIN MENU</button>
+    </div>
+  </div>
+
+  <!-- ============ VICTORY ============ -->
+  <div id="victory" class="hidden">
+    <div class="menu-content">
+      <h2 class="title small victory">VOID CLEARED</h2>
+      <div class="results">
+        <div><span>FINAL SCORE</span><b id="vic-score">0</b></div>
+        <div><span>WAVES</span><b id="vic-wave">0</b></div>
+        <div><span>ACCURACY</span><b id="vic-acc">0%</b></div>
+      </div>
+      <div class="results sub">
+        <div><span>BEST STREAK</span><b id="vic-combo">0</b></div>
+        <div><span>HEADSHOTS</span><b id="vic-headshots">0</b></div>
+        <div><span>DASHES</span><b id="vic-dashes">0</b></div>
+        <div><span>TIME</span><b id="vic-time">0:00</b></div>
+      </div>
+      <button id="btn-again" class="cta">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- ============ LOADING ============ -->
+  <div id="loading">
+    <div class="loader"></div>
+    <p>LOADING…</p>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
