@@ -160,18 +160,44 @@ print()
 # 4. Rifle: fire rate, ammo drain, auto-reload, no double fire
 # ----------------------------------------------------------------------
 print("[4] rifle fire rate / ammo / auto-reload")
-for fps in (30, 60, 144, 240):
+
+RELOAD_TIME = num("reloadTime")
+INTERVAL = 60.0 / RPM
+DURATION = 6.0
+# The closed form the simulation must agree with. Note this is NOT
+# DURATION * RPM / 60: every magazine costs a reload, and during a reload the
+# trigger is held but nothing comes out. The old version of this test compared
+# against the rpm-only figure and then allowed a slack of MAG + reload shots on
+# top, which widened the tolerance to +-58 against an expected 90 -- wide enough
+# to accept any fire rate within 60% of nominal, which is why a real
+# frame-rate dependence bug sat here unnoticed.
+EXPECTED = 0
+_t = 0.0
+while True:
+    EXPECTED += 1
+    _t += INTERVAL
+    if EXPECTED % int(MAG) == 0:
+        _t += RELOAD_TIME
+    if _t >= DURATION:
+        break
+
+
+def fire_rifle(fps, seconds=DURATION):
+    """Mirror weapons.js update() + tryFire() for the normal (hitscan) path."""
     dt = 1.0 / fps
     cooldown = 0.0
-    mag = MAG
+    mag = float(MAG)
     reserve = 270.0
     reloading = False
     reload_t = 0.0
-    RELOAD_TIME = num("reloadTime")
     shots = 0
-    held = True
-    duration = 6.0
-    for _ in range(int(duration / dt)):
+    times = []
+    for i in range(int(seconds / dt)):
+        # --- update(): the cooldown countdown. The `> 0` gate mirrors
+        # weapons.js and is what caps banked credit at one frame.
+        if cooldown > 0:
+            cooldown -= dt
+        # --- reload ---
         if reloading:
             reload_t += dt
             if reload_t >= RELOAD_TIME:
@@ -180,25 +206,78 @@ for fps in (30, 60, 144, 240):
                 reserve -= take
                 reloading = False
                 reload_t = 0.0
-        if cooldown > 0:
-            cooldown -= dt
-        if held and cooldown <= 0 and not reloading and mag > 0:
+        # --- tryFire(): trigger held down for the whole run ---
+        if cooldown <= 0 and not reloading and mag > 0:
             mag -= 1
             shots += 1
-            cooldown = 60.0 / RPM
+            times.append(i * dt)
+            # `+=`, not `=`: see weapons.js
+            cooldown += INTERVAL
             if mag <= 0:
                 reloading = True
                 reload_t = 0.0
-    expected = duration * RPM / 60.0
-    # allow a little slack: one magazine boundary + the partial reload window
-    slack = MAG + RELOAD_TIME * RPM / 60.0
-    check(abs(shots - expected) <= slack + 1,
-          f"{fps}fps: {shots} shots in {duration}s, expected ~{expected:.0f} "
-          f"(slack {slack:.1f})")
+    return shots, mag, reserve, times
+
+
+counts = {}
+for fps in (30, 40, 60, 90, 120, 144, 240):
+    shots, mag, reserve, times = fire_rifle(fps)
+    counts[fps] = shots
+    # Absolute accuracy: one shot either side of the closed form is just
+    # frame-boundary rounding. This used to be a 58-shot window.
+    check(abs(shots - EXPECTED) <= 1,
+          f"{fps}fps: {shots} shots in {DURATION}s, expected {EXPECTED} "
+          f"(off by {shots - EXPECTED})")
     check(mag >= 0, f"{fps}fps: mag went negative ({mag})")
     check(reserve >= 0, f"{fps}fps: reserve went negative ({reserve})")
-    print(f"    {fps:>3} fps -> {shots:>3} shots in {duration}s "
-          f"(ideal {expected:.1f})  mag={mag:.0f} reserve={reserve:.0f}  OK")
+    # Early-fire credit is bounded by a single frame. A gap shorter than the
+    # nominal interval is legitimate -- the remainder carries forward, so shots
+    # land on alternating 9/10-frame boundaries -- but never by more than the
+    # leftover of one frame, or a paused trigger would burst on resume.
+    gaps = [(b - a) * 1000 for a, b in zip(times, times[1:])]
+    floor_ms = INTERVAL * 1000 - 1000.0 / fps
+    if gaps:
+        check(min(gaps) >= floor_ms - 0.01,
+              f"{fps}fps: shot gap {min(gaps):.1f}ms is below the "
+              f"{floor_ms:.1f}ms single-frame floor (burst credit banked)")
+    print(f"    {fps:>3} fps -> {shots:>3} shots in {DURATION}s "
+          f"(expected {EXPECTED})  min gap {min(gaps) if gaps else 0:.1f}ms  OK")
+
+# The actual frame-rate independence property: every frame rate must land on
+# the same shot count. Comparing each case to a shared figure, rather than to
+# its own loose ideal, is what makes this a real test.
+spread = max(counts.values()) - min(counts.values())
+check(spread <= 1,
+      f"fire rate is frame-rate dependent: {counts} spans {spread} shots "
+      f"(expected <= 1)")
+print(f"    spread across {len(counts)} frame rates: {spread} shot(s)  OK")
+
+# Guard the source itself. This simulation re-implements weapons.js rather than
+# executing it, so reverting the fix in the real file changes nothing above and
+# the run still reports OK -- which is exactly how the original version of this
+# test managed to pass for so long. The revert is a one-character edit, so
+# assert on the text as well, and assert per-site rather than "somewhere in the
+# file": there are two independent rpm cooldown sites (the normal-fire path and
+# the charge-release path) and a guard that only greps for the first one passes
+# while the second is broken.
+plain_assigns = re.findall(r"this\.cooldown\s*=\s*60\s*/", WPN)
+check(not plain_assigns,
+      f"weapons.js assigns the fire interval instead of accumulating it "
+      f"({len(plain_assigns)} site(s)); `cooldown =` rounds every shot up to a "
+      f"whole frame and makes fire rate frame-rate dependent")
+accum_sites = len(re.findall(r"this\.cooldown\s*\+=\s*60\s*/", WPN))
+check(accum_sites >= 2,
+      f"weapons.js has {accum_sites} accumulating rpm site(s), expected 2 "
+      f"(normal-fire path and charge-release path)")
+# The `+=` is only safe because the countdown in update() is gated on `> 0`, so
+# an idle cooldown parks in (-dt, 0] and can never bank more than one frame of
+# credit. If that gate is ever dropped, `+=` starts accumulating burst credit.
+check(re.search(r"if\s*\(this\.cooldown\s*>\s*0\)\s*this\.cooldown\s*-=\s*dt", WPN)
+      is not None,
+      "weapons.js no longer gates the cooldown decrement on `> 0`; the "
+      "accumulating fire path can then bank burst credit while idle")
+print(f"    weapons.js: {accum_sites} accumulating rpm sites, 0 plain "
+      f"assigns, countdown still gated  OK")
 
 print()
 

@@ -471,7 +471,7 @@ export class Weapons {
         this.audio.dryFire();
         this.onEmptyClick?.();
         this._startReload();
-        this.cooldown = 0.3;
+        this.cooldown += 0.3;
         return false;
       }
 
@@ -502,14 +502,21 @@ export class Weapons {
       this.audio.dryFire();
       this.onEmptyClick?.();
       this._startReload();
-      this.cooldown = 0.25;
+      this.cooldown += 0.25;
       return false;
     }
 
     this.current.mag--;
     this.shotsFired++;
-    // Overdrive increases fire rate
-    this.cooldown = 60 / (d.rpm * (this.overdrive > 0 ? 1.35 : 1));
+    // Overdrive increases fire rate.
+    // `+=` not `=`: the previous shot's leftover is sub-frame, and assigning
+    // the interval here would throw it away. That rounds every shot up to a
+    // whole number of frames, so the real rate oscillates with frame rate
+    // (measured: 720 rpm at 60 fps, 900 at 90) rather than holding the
+    // configured value. Adding lets the remainder carry into the next shot.
+    // Safe against burst credit because update() only decrements while the
+    // cooldown is positive, which caps the credit at one frame.
+    this.cooldown += 60 / (d.rpm * (this.overdrive > 0 ? 1.35 : 1));
     this.consecutive++;
     this.spreadHeat = clamp(this.spreadHeat + 0.28, 0, 1.4);
 
@@ -572,7 +579,7 @@ export class Weapons {
     this.player.addRecoil(d.recoil, 0);
     this.vmRecoil = Math.min(this.vmRecoil + 0.12, 0.2);
     this.vmRecoilRot = Math.min(this.vmRecoilRot + 0.3, 0.45);
-    this.cooldown = 60 / d.rpm;
+    this.cooldown += 60 / d.rpm;
     this.consecutive = 0;
     this.spreadHeat = 0;
 
@@ -925,6 +932,10 @@ export class Weapons {
   // ==================================================================
   update(dt, input, player) {
     // cooldowns
+    // Note the decrement is gated on `> 0`: once the cooldown crosses zero it
+    // stops there instead of running negative. That gate is what bounds the
+    // early-fire credit to a single frame, which is what lets tryFire() safely
+    // add to the cooldown rather than assign it (see the note there).
     if (this.cooldown > 0) this.cooldown -= dt;
     if (this.swapT > 0) this.swapT -= dt;
     if (this.consecutive > 0 && this.cooldown <= 0) {
