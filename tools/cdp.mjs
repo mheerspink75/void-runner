@@ -97,9 +97,14 @@ export async function launchBrowser({
       "--disable-sync",
       "--mute-audio",
       "--window-size=1280,720",
-      // Software GL. Chrome prefers a real GPU when present and falls back to
-      // SwiftShader otherwise, so CI runners without one still get WebGL.
+      // Software GL. Chrome prefers a real GPU when one is present and falls
+      // back to SwiftShader otherwise, but newer Chrome versions gate that
+      // fallback behind an explicit opt-in, so ask for it directly as well.
+      // A runner with neither a GPU nor a working software fallback is handled
+      // by the caller as an environment skip, not a failure.
       "--enable-unsafe-swiftshader",
+      "--use-gl=angle",
+      "--use-angle=swiftshader",
       ...extraArgs,
       "about:blank",
     ];

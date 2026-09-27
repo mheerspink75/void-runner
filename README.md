@@ -231,7 +231,12 @@ node tools/browser_smoke.mjs http://127.0.0.1:8080/ --keep-screenshot
 
 Its failure semantics are deliberate. An app regression **fails** and blocks the deploy. A missing browser is **skipped** with a warning annotation, because a machine without Chrome is not a broken game and a test that blocks every deploy over a runner quirk gets deleted rather than fixed. The one rule that keeps this honest: a skip never forgives a failed check, so a broken build cannot report green because the test crashed while inspecting it. That case is covered by serving deliberately broken copies — a throwing constructor, a deleted module, and a mid-run exception — and confirming each one fails the check.
 
-Two limitations worth knowing: pointer lock cannot be granted headless, so `input.locked` is set directly to exercise firing (mouse *look* is not drivable, since CDP provides no `movementX`); and Chrome's software-GL path is not forced locally, so the GPU-less CI path relies on Chrome's own SwiftShader fallback.
+Two ordering details matter more than they look:
+
+- **The environment is checked before the app is judged.** A GPU-less runner may have no WebGL at all, and then the game is behaving *correctly*: `boot.js` detects it and shows "WebGL unavailable" rather than a black screen. Asserting first turned that correct behaviour into a build failure — which is exactly what happened the first time this ran in CI. So the check establishes that the machine can host a WebGL game and skips if it cannot; only once WebGL is confirmed does a failure mean the game is at fault.
+- **Every wait polls for a condition instead of sleeping.** CI has no GPU, so Chrome falls back to SwiftShader and draws this post chain at roughly 3 fps. Since `dt` is clamped to 50 ms, game time then advances about seven times slower than wall time, and any fixed-duration wait or frame-rate threshold measures the renderer's speed rather than whether the game works. The checks wait for "a shot was fired", "the player left the ground", "an enemy exists", with generous timeouts, and assert the render loop is *alive* rather than fast.
+
+One limitation remains: pointer lock cannot be granted headless, so `input.locked` is set directly to exercise firing. Mouse *look* is not drivable, because CDP provides no `movementX`.
 
 `sim_melee.py`, `sim_collision.py` and `verify_rayblocked.py` are worth calling out: they are the checks that cover *behaviour* rather than *structure*. The timing simulation caught a melee windup so short that no enemy in the game could physically dodge it, and the differential test guards an unrolled ray/AABB rewrite that would otherwise be very easy to get subtly wrong. If you rewrite any of those code paths, run the matching script.
 

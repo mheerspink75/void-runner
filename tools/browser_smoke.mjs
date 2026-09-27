@@ -55,6 +55,18 @@ let checks = 0;
 let skipped = false;
 let skipReason = "";
 
+// Node 21 added a global WebSocket; 22 unflagged it. The whole no-dependency
+// approach rests on it, so check rather than crash with ReferenceError.
+if (typeof WebSocket !== "function") {
+  console.log("=".repeat(64));
+  console.log("browser smoke test");
+  console.log("=".repeat(64));
+  console.log(`  node: ${process.version}`);
+  skipped = true;
+  skipReason = `node ${process.version} has no global WebSocket; needs Node 22+`;
+  report();
+}
+
 function check(cond, label, detail = "") {
   checks++;
   if (!cond) failures.push(label + (detail ? ` — ${detail}` : ""));
@@ -159,10 +171,53 @@ try {
 
   if (!boot) {
     check(false, "page reached a booted state", `timed out after ${BOOT_TIMEOUT_MS}ms`);
-    bail("page never booted and the fatal overlay never appeared");
+  }
+
+  // ---- 1b. can this machine run a WebGL game at all? ----------------
+  // This has to come BEFORE any assertion about the game, and that ordering is
+  // the whole point. A GPU-less CI runner may have no WebGL at all, in which
+  // case the game is behaving perfectly: boot.js detects it and shows "WebGL
+  // unavailable" instead of a black screen. Asserting first turned that
+  // correct behaviour into a build failure.
+  //
+  // So: establish the environment can host the game, and skip if it cannot.
+  // Only once WebGL is confirmed do failures mean the game is at fault.
+  console.log("\n[1b] can this environment run a WebGL game?");
+  let gl = null;
+  try {
+    gl = await session.eval(`
+      const c = document.createElement('canvas');
+      const g2 = c.getContext('webgl2');
+      const g = g2 || c.getContext('webgl');
+      if (!g) return { ok: false };
+      const dbg = g.getExtension('WEBGL_debug_renderer_info');
+      return {
+        ok: true,
+        webgl2: !!g2,
+        renderer: dbg ? g.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER),
+      };
+    `);
+  } catch (e) {
+    gl = { ok: false, error: e.message };
+  }
+  if (!gl || !gl.ok) {
+    bail(
+      "no WebGL context in this browser (no GPU and no working software " +
+      "fallback). The game cannot run here, so there is nothing to test; " +
+      "this is a property of the machine, not a regression. " +
+      (gl && gl.error ? `(${gl.error})` : "")
+    );
+  }
+  check(true, "WebGL context obtainable",
+    `${gl.webgl2 ? "webgl2" : "webgl1"} · ${gl.renderer}`);
+
+  // Environment confirmed. From here on, a failure is the game's fault.
+  if (!boot) {
+    bail("page never booted and no fatal overlay was shown");
   }
 
   // The boot.js contract: if the game cannot start, it must say so on screen.
+  // The WebGL case is already handled above, so anything fatal now is real.
   check(!boot.fatalShown, "no fatal-error overlay", boot.fatalShown ? boot.fatalText : "");
   check(boot.hasGame, "window.__game exists (main.js evaluated)",
     boot.hasGame ? "" : "the module graph probably failed");
@@ -182,46 +237,21 @@ try {
   const netFail = session.errors.filter((e) => /\b404\b|net::ERR_/i.test(e));
   check(netFail.length === 0, "no failed network requests", netFail.slice(0, 3).join(" | "));
 
-  // ---- 2. a WebGL context is actually available ----------------------
-  // Independent of the game object, so it runs even when boot failed.
-  console.log("\n[2] WebGL is available to the page");
-  let gl = null;
-  try {
-    gl = await session.eval(`
-      const c = document.createElement('canvas');
-      const g2 = c.getContext('webgl2');
-      const g = g2 || c.getContext('webgl');
-      if (!g) return { ok: false };
-      const dbg = g.getExtension('WEBGL_debug_renderer_info');
-      return {
-        ok: true,
-        webgl2: !!g2,
-        renderer: dbg ? g.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER),
-      };
-    `);
-  } catch (e) {
-    gl = { ok: false, error: e.message };
-  }
-  if (!gl || !gl.ok) {
-    // Environment, not app: SwiftShader should cover a GPU-less runner, but if
-    // it does not, that is the machine's problem rather than the game's.
-    check(true, "WebGL check skipped (no context available in this browser)");
-    console.log(`        reason: ${gl && gl.error ? gl.error : "no WebGL context"}`);
-  } else {
-    check(true, "WebGL context obtainable",
-      `${gl.webgl2 ? "webgl2" : "webgl1"} · ${gl.renderer}`);
-  }
-
-  // ---- 3. the render loop advances ------------------------------------
-  // Needs window.__game. If boot failed, the earlier checks already recorded
+  // ---- 2. the render loop advances ------------------------------------
+  // Needs window.__game. If boot failed, the checks above already recorded
   // that, so stop here rather than throwing into bail().
   if (!boot.hasGame) {
-    console.log("\n[3-4] render loop and gameplay");
+    console.log("\n[3-5] render loop, gameplay and console");
     console.log("  ....  not run: the game never initialised (see the failures above)");
     report();
   }
 
   console.log("\n[3] the render loop runs");
+  // Software rendering (SwiftShader, i.e. no GPU) draws this post chain at
+  // roughly 3 fps, and the dt clamp then makes game time advance far slower
+  // than wall time. So this asserts the loop is *alive*, not that it is fast,
+  // and every wait below polls for a condition rather than sleeping a fixed
+  // duration -- otherwise a slow runner produces flaky failures.
   const loop = await session.eval(`
     return new Promise(resolve => {
       const before = window.__game.renderer.info.render.frame;
@@ -229,17 +259,19 @@ try {
       const t0 = performance.now();
       const tick = () => {
         frames++;
-        if (performance.now() - t0 < 1000) requestAnimationFrame(tick);
-        else resolve({ rafFrames: frames,
+        if (performance.now() - t0 < 2000) requestAnimationFrame(tick);
+        else resolve({ rafFrames: frames, seconds: 2,
                        rendererFrames: window.__game.renderer.info.render.frame - before });
       };
       requestAnimationFrame(tick);
     });
   `);
-  check(loop.rafFrames > 3, "requestAnimationFrame is firing", `${loop.rafFrames} frames in 1s`);
+  check(loop.rafFrames >= 2, "requestAnimationFrame is firing",
+    `${loop.rafFrames} frames in ${loop.seconds}s (low is fine: software GL)`);
   // The post chain issues many draws per frame, so this only asserts that
-  // something is being submitted to the GPU at all.
-  check(loop.rendererFrames > 3, "the renderer is drawing", `${loop.rendererFrames} draws in 1s`);
+  // something is reaching the GPU at all.
+  check(loop.rendererFrames >= 2, "the renderer is drawing",
+    `${loop.rendererFrames} draws in ${loop.seconds}s`);
 
   // ---- 4. a run starts and the core systems respond ------------------
   console.log("\n[4] a run starts and core systems respond");
@@ -264,11 +296,19 @@ try {
     return { mag: g.weapons.current.mag, shots: g.weapons.shotsFired };
   `);
 
-  // Fire for ~600ms through the real mousedown handler.
+  // Fire through the real mousedown handler and wait for the shot to land.
+  // Polled rather than timed: at software-rendering frame rates a fixed 600ms
+  // hold can contain zero frames, which would look like "firing is broken".
   await session.send("Input.dispatchMouseEvent", {
     type: "mousePressed", x: 640, y: 360, button: "left", clickCount: 1, buttons: 1,
   });
-  await sleep(600);
+  let fired = 0;
+  const fireDeadline = Date.now() + 15000;
+  while (Date.now() < fireDeadline) {
+    await sleep(250);
+    fired = await session.eval(`return window.__game.weapons.shotsFired;`);
+    if (fired > before.shots) break;
+  }
   await session.send("Input.dispatchMouseEvent", {
     type: "mouseReleased", x: 640, y: 360, button: "left", clickCount: 1, buttons: 0,
   });
@@ -279,35 +319,46 @@ try {
   check(afterFire.shots > before.shots, "firing consumes ammo",
     `${afterFire.shots - before.shots} shots, mag ${before.mag}->${afterFire.mag}`);
 
-  // Jump through the real keydown path.
+  // Jump through the real keydown path. Waits for the player to actually leave
+  // the ground rather than assuming a fixed amount of game time will pass: with
+  // dt clamped and ~3 fps, a second of wall time is a fraction of a second of
+  // game time, so any height threshold would be measuring the renderer's speed
+  // instead of whether jumping works.
   const jump = await session.eval(`
     return new Promise(resolve => {
       const p = window.__game.player;
       const y0 = p.position.y;
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }));
       let peak = y0;
+      let airborne = false;
       const t0 = performance.now();
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }));
       const tick = () => {
         peak = Math.max(peak, p.position.y);
-        if (performance.now() - t0 < 1000) requestAnimationFrame(tick);
+        if (p.position.y > y0 + 0.05) airborne = true;
+        const elapsed = performance.now() - t0;
+        if (!airborne && elapsed < 20000) requestAnimationFrame(tick);
         else {
           window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }));
-          resolve({ y0: +y0.toFixed(3), peak: +peak.toFixed(3) });
+          resolve({ y0: +y0.toFixed(3), peak: +peak.toFixed(3), airborne, ms: Math.round(elapsed) });
         }
       };
       requestAnimationFrame(tick);
     });
   `);
-  // ~1.7u is the apex implied by jumpVelocity 9.6 and gravity 26. Deliberately
-  // loose: this asserts the jump happens, not that the integrator is exact.
-  check(jump.peak > jump.y0 + 0.8, "jump leaves the ground", `y ${jump.y0} -> peak ${jump.peak}`);
+  check(jump.airborne, "jump leaves the ground",
+    `y ${jump.y0} -> peak ${jump.peak} after ${jump.ms}ms`);
 
   // Enemies should spawn on wave 1 with no player action.
+  let enemyCount = 0;
+  const spawnDeadline = Date.now() + 30000;
+  while (Date.now() < spawnDeadline) {
+    enemyCount = await session.eval(`return window.__game.enemies.enemies.length;`);
+    if (enemyCount > 0) break;
+    await sleep(500);
+  }
   const wave = await session.eval(`
-    return new Promise(resolve => setTimeout(() => {
-      const g = window.__game;
-      resolve({ enemies: g.enemies.enemies.length, wave: g.waves.wave, state: g.state });
-    }, 4000));
+    const g = window.__game;
+    return { enemies: g.enemies.enemies.length, wave: g.waves.wave, state: g.state };
   `);
   check(wave.enemies > 0, "the wave director spawns enemies",
     `${wave.enemies} alive, wave ${wave.wave}`);
