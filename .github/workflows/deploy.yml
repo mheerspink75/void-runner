@@ -3,14 +3,17 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # Run the same checks on pull requests so a broken import or a stale method
+  # call is caught before merge, not after. The deploy job is skipped for
+  # these (see `if:` below) -- a PR should never publish.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  pages: write
-  id-token: write
-
+# Group by event and ref so a superseded PR run cannot cancel an unrelated
+# push-to-main deploy, and so a new push still supersedes the previous one.
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +25,9 @@ jobs:
   check:
     name: Static checks
     runs-on: ubuntu-latest
+    # Least privilege: this job only reads the checkout.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
@@ -47,7 +53,11 @@ jobs:
     # Publishing is blocked until every check above passes, so a broken import
     # or a stale method call cannot reach the live site.
     needs: check
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -9,8 +9,8 @@ Survive escalating waves of enemies in a neon-lit arena, using a pulse rifle, a 
 ## Quick start
 
 ```bash
-git clone https://github.com/matt_heerspink/void_runner.git
-cd void_runner
+git clone https://github.com/mheerspink75/void-runner.git
+cd void-runner
 ./serve.sh
 ```
 
@@ -209,7 +209,7 @@ python3 tools/verify_rayblocked.py   # differential test proving the
                                      # behaviourally identical to the original
 ```
 
-All five exit non-zero on failure, and they **do** run in CI: `.github/workflows/deploy.yml` has a `check` job that runs all five, and the `deploy` job declares `needs: check`, so a broken import or a stale method call cannot reach the live site. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
+All five exit non-zero on failure, and they **do** run in CI: `.github/workflows/deploy.yml` has a `check` job that runs all five on every push to `main` *and* on every pull request, so a broken import is caught before merge rather than after. The `deploy` job declares `needs: check` and is skipped for pull requests, so a PR can never publish and a failing check blocks the live site. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
 
 `sim_melee.py` and `verify_rayblocked.py` are worth calling out: they are the checks that cover *behaviour* rather than *structure*. The timing simulation caught a melee windup so short that no enemy in the game could physically dodge it, and the differential test guards an unrolled ray/AABB rewrite that would otherwise be very easy to get subtly wrong. If you rewrite either of those code paths, run the matching script.
 
@@ -255,7 +255,7 @@ The site is fully static (no build step), so it deploys to **GitHub Pages** as-i
 
 1. Push the repo to GitHub.
 2. In the repository settings, set **Pages → Build and deployment → Source: GitHub Actions**.
-3. The game will be live at `https://<user>.github.io/void_runner/` after the first workflow run.
+3. The game will be live at `https://mheerspink75.github.io/void-runner/` after the first workflow run.
 
 ---
 
