@@ -46,6 +46,9 @@ jobs:
       - name: sim_melee.py
         run: python3 tools/sim_melee.py
 
+      - name: sim_collision.py
+        run: python3 tools/sim_collision.py
+
       - name: verify_rayblocked.py
         run: python3 tools/verify_rayblocked.py
 

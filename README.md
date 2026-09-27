@@ -190,7 +190,7 @@ halves of that, so if either is changed the suite goes red.
 
 ## Development
 
-This project has no Node dependency, so it ships with five static checkers that run under plain `python3`. Run all five after any multi-file change:
+This project has no Node dependency, so it ships with six static checkers that run under plain `python3`. Run all six after any multi-file change:
 
 ```bash
 python3 tools/validate.py .          # bracket balance, import resolution,
@@ -198,20 +198,26 @@ python3 tools/validate.py .          # bracket balance, import resolution,
                                      # duplicate declarations
 python3 tools/api_check.py .         # every this.obj.method() call resolves
                                      # to a method actually defined
-python3 tools/smoke.py               # getElementById ids exist in index.html,
+python3 tools/smoke.py .             # getElementById ids exist in index.html,
                                      # classList names exist in style.css,
                                      # CONFIG/KEYS lookups, weapon slots
 python3 tools/sim_melee.py           # headless timing simulation: melee
                                      # windup, fire rate, auto-reload,
                                      # frame-rate independence
+python3 tools/sim_collision.py       # collision + jump simulation: the player
+                                     # can always get out of a gap, jumps work
+                                     # in contact with cover, real overhangs
+                                     # still stop a jump
 python3 tools/verify_rayblocked.py   # differential test proving the
                                      # line-of-sight slab rewrite is
                                      # behaviourally identical to the original
 ```
 
-All five exit non-zero on failure, and they **do** run in CI: `.github/workflows/deploy.yml` has a `check` job that runs all five on every push to `main` *and* on every pull request, so a broken import is caught before merge rather than after. The `deploy` job declares `needs: check` and is skipped for pull requests, so a PR can never publish and a failing check blocks the live site. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
+All six exit non-zero on failure, and they **do** run in CI: `.github/workflows/deploy.yml` has a `check` job that runs all six on every push to `main` *and* on every pull request, so a broken import is caught before merge rather than after. The `deploy` job declares `needs: check` and is skipped for pull requests, so a PR can never publish and a failing check blocks the live site. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
 
-`sim_melee.py` and `verify_rayblocked.py` are worth calling out: they are the checks that cover *behaviour* rather than *structure*. The timing simulation caught a melee windup so short that no enemy in the game could physically dodge it, and the differential test guards an unrolled ray/AABB rewrite that would otherwise be very easy to get subtly wrong. If you rewrite either of those code paths, run the matching script.
+`sim_melee.py`, `sim_collision.py` and `verify_rayblocked.py` are worth calling out: they are the checks that cover *behaviour* rather than *structure*. The timing simulation caught a melee windup so short that no enemy in the game could physically dodge it, and the differential test guards an unrolled ray/AABB rewrite that would otherwise be very easy to get subtly wrong. If you rewrite any of those code paths, run the matching script.
+
+`sim_collision.py` is the one to know about, because it found a soft-lock. The head-bonk guard in `World.resolve()` was missing a `c.minY > footY` term, so it fired for any box resting on the floor — `c.minY - footY` is `0` there, which trivially passes a `< height` test. Brushing a crate mid-jump therefore set the body to `y = -height` and zeroed its velocity, so the jump did not happen at all; and because hopping a low obstacle is the only way out of a gap narrower than the player, any such gap became a soft-lock. Both are covered now, and the file parses the guard out of `world.js` rather than mirroring it, so reverting the fix fails the simulation rather than passing silently.
 
 Two limits are worth being explicit about, because they bound what these tools can tell you:
 
@@ -251,7 +257,7 @@ a hard reload, or clearing site data in DevTools → Application → Storage.
 
 ## Deployment
 
-The site is fully static (no build step), so it deploys to **GitHub Pages** as-is. The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs the five static checks in a `check` job and only publishes the repo root once they pass, on every push to `main`:
+The site is fully static (no build step), so it deploys to **GitHub Pages** as-is. The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs the six static checks in a `check` job and only publishes the repo root once they pass, on every push to `main`:
 
 1. Push the repo to GitHub.
 2. In the repository settings, set **Pages → Build and deployment → Source: GitHub Actions**.

@@ -694,8 +694,15 @@ export class World {
         continue;
       }
 
-      // Head bonk
-      if (footY + height >= c.minY - 0.02 && pos.vy > 0 && c.minY - footY < height) {
+      // Head bonk -- only for a genuine overhead obstruction.
+      // `c.minY > footY` is load-bearing. Without it this also fires for any
+      // box resting on the floor: `c.minY - footY` is then 0, which is
+      // trivially < height, so brushing against a crate while jumping set
+      // pos.y = c.minY - height - 0.001 (i.e. below the floor) and zeroed vy,
+      // killing the jump outright. It also made an unfittable gap between two
+      // colliders a soft-lock, because hopping the low obstacle was the only
+      // way out. The remaining terms bound the underside to head height.
+      if (c.minY > footY + 0.02 && pos.vy > 0 && c.minY - footY < height) {
         pos.y = c.minY - height - 0.001;
         pos.vy = 0;
       }
