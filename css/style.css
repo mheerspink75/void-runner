@@ -658,6 +658,65 @@ kbd {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===========================================================
+   FATAL ERROR
+   Injected by js/boot.js, never present in index.html — it only
+   exists once something has already gone wrong.
+   =========================================================== */
+
+#fatal {
+  position: fixed; inset: 0;
+  z-index: 200;                 /* above #loading (60) and the menus */
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(5, 7, 12, .94);
+  backdrop-filter: blur(3px);
+}
+.fatal-box {
+  width: min(680px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 28px 30px;
+  background: var(--panel);
+  border: 1px solid var(--danger-dim);
+  border-left: 3px solid var(--danger);
+  box-shadow: 0 0 60px rgba(255, 45, 85, .18);
+}
+.fatal-title {
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 4px;
+  color: var(--danger);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.fatal-message {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text);
+  margin-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+.fatal-detail {
+  /* user-select is off globally so the HUD cannot be selected mid-fight;
+     a stack trace is the one thing here worth selecting. */
+  user-select: text;
+  -webkit-user-select: text;
+  max-height: 260px;
+  overflow: auto;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, .45);
+  border: 1px solid rgba(127, 163, 181, .18);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.fatal-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ===========================================================
    Responsive
    =========================================================== */
 

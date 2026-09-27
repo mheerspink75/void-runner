@@ -54,7 +54,7 @@
 
     <div id="hud-bottomright">
       <div id="ammo-block">
-        <div class="ammo-count"><span id="text-ammo">30</span><em id="text-ammo-reserve">/ 120</em></div>
+        <div class="ammo-count"><span id="text-ammo">36</span><em id="text-ammo-reserve">/ 270</em></div>
         <div class="bar-shell thin">
           <div class="bar-fill ammo" id="bar-ammo"></div>
         </div>
@@ -204,8 +204,15 @@
     <div class="loader"></div>
     <p>LOADING…</p>
   </div>
+
+  <!-- ============ FATAL ERROR ============ -->
+  <!-- Populated by js/boot.js. Stays hidden unless the game cannot start. -->
+  <div id="fatal" class="hidden"></div>
 </div>
 
-<script type="module" src="js/main.js"></script>
+<!-- Loads js/boot.js, not js/main.js directly: boot.js installs error
+     reporting and probes for WebGL before pulling the game in, so a failure
+     during start-up surfaces on screen instead of leaving a blank page. -->
+<script type="module" src="js/boot.js"></script>
 </body>
 </html>

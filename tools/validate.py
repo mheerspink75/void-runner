@@ -198,6 +198,72 @@ KNOWN_EXTERNAL = {
     "onVictory", "onCollect", "onShoot",
 }
 
+# ----------------------------------------------------------------------
+# Inherited members from the vendored three.js base classes
+# ----------------------------------------------------------------------
+# The field and method checks below are per-file: they collect what a class
+# writes and reads inside one file and compare the two. A class that extends a
+# vendored three.js base therefore looks like it reads fields it never writes,
+# because the writes live in vendor/postfx/Pass.js. That produced a standing
+# false positive on `this.renderToScreen` (assigned at Pass.js:24) which is
+# worse than no check at all -- a validator that flags known-good lines teaches
+# you to skim its output and stop reading the real warnings.
+#
+# So: parse the vendored classes and treat the members they define as
+# available to subclasses. Derived from the actual vendored source rather than
+# hardcoded, so it survives a three.js upgrade.
+VENDOR_BASES: dict[str, dict[str, set[str]]] = {}
+
+
+def load_vendor_bases() -> None:
+    """Map each vendored class name to the fields it writes and methods it defines.
+
+    three.js keeps one class per file, so file-level attribution is exact
+    enough and avoids having to brace-match class bodies.
+    """
+    vendor = os.path.join(ROOT, "vendor")
+    if not os.path.isdir(vendor):
+        return
+    for dirpath, _dirnames, filenames in os.walk(vendor):
+        for fn in filenames:
+            if not fn.endswith(".js"):
+                continue
+            path = os.path.join(dirpath, fn)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    code = strip_comments_and_strings(fh.read())
+            except OSError:
+                continue
+            names = re.findall(
+                r"(?m)^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)", code
+            )
+            if not names:
+                continue
+            fields = {m.group(1) for m in THIS_WRITE_RE.finditer(code)}
+            methods = {
+                m.group(1)
+                for m in re.finditer(
+                    r"(?m)^\s{2,}(?:static\s+|get\s+|set\s+|async\s+)*"
+                    r"([A-Za-z_$][\w$]*)\s*\(",
+                    code,
+                )
+            }
+            for n in names:
+                VENDOR_BASES[n] = {"fields": fields, "methods": methods}
+
+
+def inherited_members(code: str, kind: str) -> set[str]:
+    """Members available from any vendored base class this file extends."""
+    out: set[str] = set()
+    for m in re.finditer(
+        r"(?m)^\s*(?:export\s+)?class\s+[A-Za-z_$][\w$]*\s+extends\s+([A-Za-z_$][\w$]*)",
+        code,
+    ):
+        base = VENDOR_BASES.get(m.group(1))
+        if base:
+            out |= base[kind]
+    return out
+
 
 def check_this_fields(path: str, code: str) -> None:
     assigned: set[str] = set()
@@ -214,6 +280,11 @@ def check_this_fields(path: str, code: str) -> None:
         assigned.add(m.group(1))
     for m in re.finditer(r"(?m)^\s{2,}(?:static\s+)?(?:get|set)\s+([A-Za-z_$][\w$]*)\s*\(", code):
         assigned.add(m.group(1))
+    # Members the vendored base class provides. Inherited *methods* count here
+    # too: `this.setSize()` is syntactically a read of `this.setSize`, so a
+    # subclass calling a base-class method would otherwise be reported as
+    # reading a field it never assigns.
+    assigned |= inherited_members(code, "fields") | inherited_members(code, "methods")
 
     read: dict[str, int] = {}
     for m in THIS_READ_RE.finditer(code):
@@ -240,6 +311,8 @@ def check_missing_methods(path: str, code: str) -> None:
         defined.add(m.group(1))
     for m in THIS_WRITE_RE.finditer(code):
         defined.add(m.group(1))
+    # Methods the vendored base class provides (Pass.setSize, and so on).
+    defined |= inherited_members(code, "methods")
 
     called: dict[str, int] = {}
     for m in re.finditer(r"\bthis\.([A-Za-z_$][\w$]*)\s*\(", code):
@@ -432,6 +505,8 @@ def main() -> int:
     if not files:
         print("no .js files found", file=sys.stderr)
         return 1
+
+    load_vendor_bases()
 
     for path in files:
         with open(path, "r", encoding="utf-8") as fh:

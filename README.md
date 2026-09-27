@@ -2,7 +2,7 @@
 
 A 3D first-person shooter that runs in the browser. Built with **Three.js** (vendored locally — no build step, no CDN, works fully offline).
 
-Survive escalating waves of enemies in a neon-lit arena, using a pulse rifle, a scatter cannon, and a charge-and-pierce arc lance.
+Survive escalating waves of enemies in a neon-lit arena, using a pulse rifle, a scatter cannon, a charge-and-pierce arc lance, and a lobbed proximity grenade.
 
 ---
 
@@ -41,7 +41,7 @@ Then open **http://localhost:8080**
 | `Q` | **Dash** — short burst with invulnerability frames |
 | `F` | **Melee** — knockback swing that interrupts enemy attacks |
 | `Ctrl` / `C` | Crouch |
-| `1` `2` `3` / scroll | Switch weapon |
+| `1` `2` `3` `4` / scroll | Switch weapon |
 | `M` | Mute audio |
 | `Esc` | Pause |
 
@@ -53,10 +53,11 @@ Then open **http://localhost:8080**
 
 **Combat** — hitscan raycasting with per-shot spread cones, bloom while firing, movement and crouch modifiers, headshot multipliers, recoil that kicks both the camera and the viewmodel, tracers, impact sparks, decals, and floating damage numbers.
 
-**Three weapons**
-- **Pulse Rifle** — 700 RPM, 30-round mag, tight accuracy, 2.6× headshot multiplier, fully automatic.
-- **Scatter Cannon** — 9 pellets per shot, 8-round mag, heavy spread and recoil, much higher close-range damage.
+**Four weapons**
+- **Pulse Rifle** — 900 RPM, 36-round mag, tight accuracy, 2.6× headshot multiplier, fully automatic.
+- **Scatter Cannon** — 9 pellets per shot, 10-round mag, heavy spread and recoil, much higher close-range damage.
 - **Arc Lance** — hold fire to charge (0.9 s), then release for a piercing beam that passes through every enemy in the lane. Partially charged shots are weak and single-target.
+- **Arc Lobber** — lobs a proximity grenade on a physical arc (26 u/s, gravity, two bounces), so it clears cover instead of being blocked by it. Detonates on contact or after a 2 s fuse, whichever comes first, so a bad throw is never wasted. 135 direct / 120 in a 6.5-unit blast that falls off to 25% at the edge and knocks enemies back. No headshot bonus — it is an area tool, not a sniper.
 
 **Enemies** — four archetypes with distinct models, stats, and AI:
 - **HUSK** — baseline chaser.
@@ -100,6 +101,7 @@ css/style.css       HUD, menus, vignette, and animation styling
 vendor/
   three.module.js   Three.js r160 (vendored)
 js/
+  boot.js           entry point: failure reporting + WebGL probe, then loads the game
   main.js           bootstrap, game state machine, main loop
   config.js         all tuning constants (weapons, enemies, waves, movement)
   utils.js          math helpers
@@ -107,6 +109,7 @@ js/
   player.js         FPS controller: movement, stance, health, camera
   weapons.js        firing, recoil, reload, viewmodel rendering
   projectiles.js    enemy-fired projectile simulation (gravity arcs)
+  playerprojectiles.js  player-launched ballistics (the Arc Lobber)
   enemies.js        enemy models, AI, and the spawn manager
   pickups.js        health/ammo/stamina/overdrive drops
   waves.js          wave director
@@ -117,6 +120,7 @@ js/
   hud.js            HUD binding and minimap rendering
   env.js            procedural environment map (PMREM)
   textures.js       canvas-generated textures
+  lightpool.js      fixed pool of transient dynamic lights
 ```
 
 > The vendored `three.module.js` and `vendor/postfx/*` files are stock Three.js
@@ -124,6 +128,15 @@ js/
 > project runs with no bundler and no import map.
 
 ### How it fits together
+
+`index.html` loads **`js/boot.js`**, not `main.js`. `boot.js` has no imports of
+its own — a static import would have to be fetched before a single line of it
+ran, so a broken module would take the page down with nothing installed to
+catch it. Instead it installs `window.onerror` and `unhandledrejection`
+handlers, probes for a WebGL context, and only then pulls the game in with a
+dynamic `import()`. That try/catch is what turns the two failure modes this
+project actually hits — no WebGL, and a stale module cache — into an on-screen
+explanation instead of a blank page and something cryptic in the console.
 
 `main.js` owns the state machine (`menu → playing ⇄ paused → gameover / victory`) and drives everything from a single `requestAnimationFrame` loop. Systems are decoupled and communicate through callbacks:
 
@@ -157,6 +170,22 @@ Other measures:
 - `dt` is clamped to 50 ms so a tab-switch can't tunnel bodies through walls.
 - A single 2048² shadow map covers the arena.
 
+### Frame-rate independence
+
+Fire rates are specified in RPM, so they have to mean the same thing at 30 fps
+and at 240. The fire path *adds* the interval to the cooldown rather than
+assigning it, which lets the sub-frame remainder from the previous shot carry
+into the next one. Assigning instead rounds every shot up to a whole number of
+frames, which made the pulse rifle measure 720 RPM at 60 fps and 900 at 90 —
+and because the adaptive quality system lowers frame rate on weak hardware,
+that quietly cost the weakest machines the most damage per second. Measured
+spread across 30–240 fps is now 1.1%.
+
+Accumulating is only safe because the cooldown countdown in `Weapons.update()`
+is gated on `> 0`, so an idle cooldown parks in `(-dt, 0]` and the banked
+early-fire credit can never exceed a single frame. `sim_melee.py` asserts both
+halves of that, so if either is changed the suite goes red.
+
 ---
 
 ## Development
@@ -180,13 +209,31 @@ python3 tools/verify_rayblocked.py   # differential test proving the
                                      # behaviourally identical to the original
 ```
 
-All five exit non-zero on failure, so they drop straight into CI. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
+All five exit non-zero on failure, and they **do** run in CI: `.github/workflows/deploy.yml` has a `check` job that runs all five, and the `deploy` job declares `needs: check`, so a broken import or a stale method call cannot reach the live site. They exist because this project is written and edited without a browser or a JS runtime available — between them they catch the bugs that would otherwise only appear as a runtime `TypeError` (a stale method call, a missing DOM id, a bare `from 'three'` specifier, a config key read as `undefined`).
 
 `sim_melee.py` and `verify_rayblocked.py` are worth calling out: they are the checks that cover *behaviour* rather than *structure*. The timing simulation caught a melee windup so short that no enemy in the game could physically dodge it, and the differential test guards an unrolled ray/AABB rewrite that would otherwise be very easy to get subtly wrong. If you rewrite either of those code paths, run the matching script.
+
+Two limits are worth being explicit about, because they bound what these tools can tell you:
+
+- **The simulations model the code, they do not execute it.** `sim_melee.py` reimplements `weapons.js` frame by frame, so it cannot see an edit to the real file. That is why it also asserts on the *source text* of the invariants it depends on — a one-character revert from `cooldown +=` back to `cooldown =` is invisible to the model, so the guard checks the file directly.
+- **They are static, so they cannot know intent.** `validate.py` resolves `this.x` per file, which means a class extending a vendored three.js base looks like it reads fields it never writes. Rather than hardcode an allowlist, it parses the vendored classes and treats their members as inherited — so the check stays honest across a three.js upgrade instead of accumulating false positives you learn to ignore.
 
 ---
 
 ## Troubleshooting
+
+**A red panel saying something failed** — the game reports its own start-up
+failures. `js/boot.js` catches a missing WebGL context, a module that will not
+load, and any uncaught error afterwards, and shows what actually went wrong
+with a copyable stack trace instead of leaving a blank page. The three you are
+most likely to hit:
+
+- **"WebGL unavailable"** — hardware acceleration is off, or the GPU is
+  blocklisted. The game is WebGL-only and has no 2D fallback.
+- **"Failed to load resource"** — a module could not be fetched. You probably
+  opened `index.html` directly; ES modules need HTTP.
+- **"Failed to start the game"** — almost always a stale module cache; the
+  message says so and the build stamp below confirms it.
 
 **`Cannot read properties of undefined (reading 'someConfigKey')`** — a stale
 module cache. Confirm by looking at the build stamp under the start button: it
@@ -194,7 +241,7 @@ should read `build N`. If the number does not change after a reload, the
 browser is serving cached modules. Fix with `./serve.sh` (sends `no-store`),
 a hard reload, or clearing site data in DevTools → Application → Storage.
 
-**Blank screen / no HUD** — you almost certainly opened `index.html` directly. ES modules require HTTP; start a server as shown above.
+**Blank screen / no HUD** — you almost certainly opened `index.html` directly. ES modules require HTTP; start a server as shown above. If the red panel did *not* appear and you are serving over HTTP, check the browser console — that path means `boot.js` itself failed to parse.
 
 **Pointer lock doesn't engage** — some browsers restrict it to secure contexts and top-level documents. The game stays playable without it (it just won't capture the mouse); click the canvas to retry. Serving over `localhost` or HTTPS fixes it.
 
@@ -204,7 +251,7 @@ a hard reload, or clearing site data in DevTools → Application → Storage.
 
 ## Deployment
 
-The site is fully static (no build step), so it deploys to **GitHub Pages** as-is. The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) publishes the repo root on every push to `main`:
+The site is fully static (no build step), so it deploys to **GitHub Pages** as-is. The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs the five static checks in a `check` job and only publishes the repo root once they pass, on every push to `main`:
 
 1. Push the repo to GitHub.
 2. In the repository settings, set **Pages → Build and deployment → Source: GitHub Actions**.

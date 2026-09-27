@@ -8,6 +8,22 @@
 
 import * as THREE from '../vendor/three.module.js';
 
+// Process-lifetime cache, deliberately never invalidated.
+//
+// The arena (World) is constructed once at boot and reused across every run —
+// _resetRun() in main.js clears the dynamic systems but never rebuilds the
+// world or its materials. So this cache's lifetime is the World's lifetime,
+// not a run's, and nothing here may be disposed while the World is alive.
+//
+// Disposing would not corrupt the arena: three.js drops the GPU handle in
+// deallocateTexture() and re-uploads from texture.source on next use, so the
+// maps would come back looking correct. The cost is a full re-upload of every
+// texture on every subsequent run, which is exactly the kind of hitch the
+// static arena exists to avoid.
+//
+// So there is deliberately no dispose path. If a future change rebuilds the
+// World, that change should own disposal for the whole graph it builds, rather
+// than reaching in here and invalidating textures the live World still uses.
 const cache = new Map();
 
 function cached(key, fn) {
@@ -455,14 +471,4 @@ export function holeSprite() {
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   });
-}
-
-export function disposeTextures() {
-  for (const v of cache.values()) {
-    if (v?.dispose) v.dispose();
-    else if (v && typeof v === 'object') {
-      for (const t of Object.values(v)) t?.dispose?.();
-    }
-  }
-  cache.clear();
 }

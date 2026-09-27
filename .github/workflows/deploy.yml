@@ -14,7 +14,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Static checks, run before anything is published. All five tools are
+  # stdlib-only python3, which the runner already provides, so there is nothing
+  # to install and no lockfile to drift. They exist because this project is
+  # written without a browser or a JS runtime available, and between them they
+  # catch the failures that would otherwise only show up as a runtime TypeError.
+  check:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show python version
+        run: python3 --version
+
+      - name: validate.py
+        run: python3 tools/validate.py .
+
+      - name: api_check.py
+        run: python3 tools/api_check.py .
+
+      - name: smoke.py
+        run: python3 tools/smoke.py .
+
+      - name: sim_melee.py
+        run: python3 tools/sim_melee.py
+
+      - name: verify_rayblocked.py
+        run: python3 tools/verify_rayblocked.py
+
   deploy:
+    # Publishing is blocked until every check above passes, so a broken import
+    # or a stale method call cannot reach the live site.
+    needs: check
     runs-on: ubuntu-latest
     environment:
       name: github-pages
